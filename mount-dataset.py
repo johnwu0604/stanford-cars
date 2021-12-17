@@ -3,7 +3,7 @@ import tempfile
 import os
 
 ws = Workspace.from_config()
-dataset = ws.datasets['Stanford Car Dataset']
+dataset = ws.datasets['Car Dataset']
 
 mounted_path = 'data'
 os.makedirs(mounted_path)

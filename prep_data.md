@@ -28,10 +28,26 @@ export KAGGLE_KEY=xxxxxxxxxxxxxx
 5. Download kaggle dataset into mounted blobstore
 
 ```
-mkdir blobstore/stanford-cars
-cd blobstore/stanford-cars
-kaggle datasets download -d jessicali9530/stanford-cars-dataset
-unzip stanford-cars-dataset.zip
+mkdir blobstore/cars
+cd blobstore/cars
+kaggle datasets download -d jutrera/stanford-car-dataset-by-classes-folder
+unzip stanford-car-dataset-by-classes-folder.zip
+rm stanford-car-dataset-by-classes-folder.zip
 ```
 
-6. Register `stanford-cars' folder as a dataset from Studio UI
+6. Refactor data 
+
+```
+mv car_data car_data_1
+mv car_data/car_data car_data
+rm -rf car_data_1
+```
+
+7. Unmount blobstore
+
+```
+cd ../..
+sudo umount blobfuse
+```
+
+7. Register `stanford-cars' folder as a dataset from Studio UI

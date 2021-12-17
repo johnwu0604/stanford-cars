@@ -132,3 +132,6 @@ dmypy.json
 blobstore/*
 data/*
 blobfuse_connection.cfg
+*.h5
+model/*
+*mlruns/*
