@@ -1,103 +1,232 @@
-import csv
-import mlflow
-import requests
+import os
 import numpy as np
-import tensorflow as tf
-import os 
-import argparse
-from keras.preprocessing.image import ImageDataGenerator
-from keras.applications import densenet
-from keras.models import Sequential, Model, load_model
-from keras.layers import Conv2D, MaxPooling2D
-from keras.layers import Activation, Dropout, Flatten, Dense
-from keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint, Callback
-from keras import regularizers
+import torch
+import mlflow
+import torch.nn as nn
 
-parser = argparse.ArgumentParser()
-parser.add_argument("--data_dir", type=str)
-args = parser.parse_args()
-data_dir = args.data_dir
+from argparse import ArgumentParser
+from torch.nn import functional as F
+from pytorch_lightning.core.lightning import LightningModule
+from pytorch_lightning import Trainer, seed_everything
+from torchmetrics.functional.classification import accuracy
+from pytorch_lightning.loggers import MLFlowLogger
+from torch.optim.lr_scheduler import ReduceLROnPlateau, OneCycleLR
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from torch.optim import Adam
+from torchvision import models, transforms
+from torch.utils.data import DataLoader, random_split
+from torchvision.datasets import ImageFolder
+from typing import Optional
+from torch.nn import Module
 
-# data_dir = '../blobstore/cars'
-img_width, img_height = 224, 224
-# num_train_samples = 8144
-# num_validation_samples = 8041
-num_train_samples = 100
-num_validation_samples = 10
-epochs = 1
-batch_size = 8
-num_classes = 196
+BN_TYPES = (nn.BatchNorm1d, nn.BatchNorm2d, nn.BatchNorm3d)
 
-def build_model():
+def _make_trainable(module: Module) -> None:
+    """Unfreezes a given module.
+    Args:
+        module: The module to unfreeze
+    """
+    for param in module.parameters():
+        param.requires_grad = True
+    module.train()
 
-    weights_file = 'densenet121_weights_tf_dim_ordering_tf_kernels_notop.h5'
-    if not os.path.exists(weights_file):
-        url = 'https://github.com/fchollet/deep-learning-models/releases/download/v0.8/densenet121_weights_tf_dim_ordering_tf_kernels_notop.h5'
-        r = requests.get(url, allow_redirects=True)
-        open(weights_file, 'wb').write(r.content)
 
-    base_model = densenet.DenseNet121(input_shape=(img_width, img_height, 3),
-                                      weights=weights_file,
-                                      include_top=False,
-                                      pooling='avg')
+def _recursive_freeze(module: Module,
+                      train_bn: bool = True) -> None:
+    """Freezes the layers of a given module.
+    Args:
+        module: The module to freeze
+        train_bn: If True, leave the BatchNorm layers in training mode
+    """
+    children = list(module.children())
+    if not children:
+        if not (isinstance(module, BN_TYPES) and train_bn):
+            for param in module.parameters():
+                param.requires_grad = False
+            module.eval()
+        else:
+            # Make the BN layers trainable
+            _make_trainable(module)
+    else:
+        for child in children:
+            _recursive_freeze(module=child, train_bn=train_bn)
+
+
+def freeze(module: Module,
+           n: Optional[int] = None,
+           train_bn: bool = True) -> None:
+    """Freezes the layers up to index n (if n is not None).
+    Args:
+        module: The module to freeze (at least partially)
+        n: Max depth at which we stop freezing the layers. If None, all
+            the layers of the given module will be frozen.
+        train_bn: If True, leave the BatchNorm layers in training mode
+    """
+    children = list(module.children())
+    n_max = len(children) if n is None else int(n)
+
+    for child in children[:n_max]:
+        _recursive_freeze(module=child, train_bn=train_bn)
+
+    for child in children[n_max:]:
+        _make_trainable(module=child)
+
+class ResNet50(LightningModule):
+
+    def __init__(self, 
+                data_dir: str,
+                train_bn: bool = True,
+                batch_size: int = 16,
+                lr: float = 1e-3,
+                num_workers: int = 4,
+                hidden_1: int = 1024,
+                hidden_2: int = 512,
+                epoch_freeze: int = 8,
+                total_steps: int = 15,
+                pct_start: float = 0.2,
+                anneal_strategy: str = 'cos',
+                **kwargs):
+        super().__init__()
+        self.train_bn = train_bn
+        self.batch_size = batch_size
+        self.lr = lr
+        self.num_workers = num_workers
+        self.hidden_1 = hidden_1
+        self.hidden_2 = hidden_2
+        self.epoch_freeze = epoch_freeze
+        self.total_steps = total_steps
+        self.pct_start = pct_start
+        self.anneal_strategy = anneal_strategy
+        self.save_hyperparameters()
+        self.data_dir = data_dir
+        self.__build_model()
+        
+    def __build_model(self):
+        num_target_classes = 196
+        backbone = models.resnet50(pretrained=True)
     
-    for layer in base_model.layers:
-        layer.trainable = True
+        _layers = list(backbone.children())[:-1]
+        self.feature_extractor = nn.Sequential(*_layers)
 
-    x = base_model.output
-    x = Dense(1000, kernel_regularizer=regularizers.l1_l2(0.01), activity_regularizer=regularizers.l2(0.01))(x)
-    x = Activation('relu')(x)
-    x = Dense(500, kernel_regularizer=regularizers.l1_l2(0.01), activity_regularizer=regularizers.l2(0.01))(x)
-    x = Activation('relu')(x)
-    predictions = Dense(num_classes, activation='softmax')(x)
-    model = Model(inputs=base_model.input, outputs=predictions)
+        _fc_layers = [nn.Linear(2048, self.hidden_1),
+                     nn.Linear(self.hidden_1, self.hidden_2),
+                     nn.Linear(self.hidden_2, num_target_classes)]
+        self.fc = nn.Sequential(*_fc_layers)
+
+    def forward(self, x):
+        x = self.feature_extractor(x)
+        x = x.squeeze(-1).squeeze(-1)
+        x = self.fc(x)
+        return x
     
-    return model
+    def train(self, mode=True):
+        super().train(mode=mode)
+        epoch = self.current_epoch
+        if epoch < self.epoch_freeze and mode:
+            freeze(module=self.feature_extractor,
+                   train_bn=self.train_bn) 
+            
+    def training_step(self, batch, batch_idx):
+        x, y = batch
+        y_logits = self.forward(x)
+        train_loss = F.cross_entropy(y_logits, y)
+        acc = accuracy(y_logits, y)
+        self.log('train_loss', train_loss, prog_bar=True)
+        self.log('train_acc', acc, prog_bar=True)
 
-class_names = []
-with open(data_dir + '/names.csv') as csv_file:
-    csv_reader = csv.reader(csv_file, delimiter=';')
-    for row in csv_reader:
-        class_names.append(row[0])
+    def validation_step(self, batch, batch_idx):
+        x, y = batch
+        y_logits = self.forward(x)
+        val_loss = F.cross_entropy(y_logits, y)
+        acc = accuracy(y_logits, y)
+        self.log('val_loss', val_loss, prog_bar=True)
+        self.log('val_acc', acc, prog_bar=True)
 
-train_data_dir = data_dir + '/car_data/train'
-validation_data_dir = data_dir + '/car_data/test'
+    def configure_optimizers(self):
+        if self.current_epoch < self.epoch_freeze:
+            optimizer = Adam(filter(lambda p: p.requires_grad, self.parameters()), lr=self.lr)
+            return optimizer
+        else:
+            optimizer = optim.Adam(filter(lambda p: p.requires_grad, self.parameters()), lr=self.lr)     
+            scheduler = OneCycleLR(optimizer,
+                            max_lr=self.lr,
+                            total_steps=self.total_steps,
+                            pct_start=self.pct_start, anneal_strategy=self.anneal_strategy)
+        return [optimizer], [scheduler]
 
-train_datagen = ImageDataGenerator(
-    rescale=1. / 255,
-    zoom_range=0.2,
-    rotation_range = 5,
-    horizontal_flip=True)
+    def setup(self, stage: str):
 
-test_datagen = ImageDataGenerator(rescale=1. / 255)
+        mean, std = [0.485, 0.456, 0.406], [0.229, 0.224, 0.225]
+        train_transforms = transforms.Compose([
+            transforms.Resize((400, 400)),
+            transforms.RandomCrop(350),
+            transforms.RandomHorizontalFlip(),
+            transforms.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.2),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std, inplace=True)
+        ])
+        train = ImageFolder(self.data_dir + '/train', train_transforms)
 
-train_generator = train_datagen.flow_from_directory(
-    train_data_dir,
-    target_size=(img_width, img_height),
-    batch_size=batch_size,
-    class_mode='categorical')
+        val_transforms = transforms.Compose([
+            transforms.Resize((400, 400)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean, std, inplace=True)
+        ])
+        val = ImageFolder(self.data_dir + '/test', val_transforms)
+        valid, _ = random_split(val, [len(val), 0])
 
-validation_generator = test_datagen.flow_from_directory(
-    validation_data_dir,
-    target_size=(img_width, img_height),
-    batch_size=batch_size,
-    class_mode='categorical')
+        self.train_dataset = train
+        self.val_dataset = valid
 
-model = build_model()
-model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['acc', 'mse'])
+    def train_dataloader(self):
+        return DataLoader(dataset=self.train_dataset,
+                            batch_size=self.batch_size,
+                            num_workers=self.num_workers,
+                            shuffle=True,
+                            pin_memory=True)
 
-early_stop = EarlyStopping(monitor='val_loss', patience=8, verbose=1, min_delta=1e-4)
-reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.1, patience=4, verbose=1, min_delta=1e-4)
-callbacks_list = [early_stop, reduce_lr]
+    def val_dataloader(self):
+        return DataLoader(dataset=self.val_dataset,
+                            batch_size=self.batch_size,
+                            num_workers=self.num_workers,
+                            shuffle=False,
+                            pin_memory=True)
 
-mlflow.tensorflow.autolog()
+def main(args):
 
-model_history = model.fit(
-    train_generator,
-    epochs=epochs,
-    steps_per_epoch = num_train_samples // batch_size,
-    validation_data=validation_generator,
-    validation_steps=num_validation_samples // batch_size,
-    callbacks=callbacks_list)
+    seed_everything(42)
+    model = ResNet50(data_dir=args.data_dir, batch_size=args.batch_size)
 
-mlflow.keras.save_model(model, 'model')
+    mlf_logger = MLFlowLogger()
+    
+    checkpoint_cb = ModelCheckpoint(dirpath='./cars', filename ='cars-{epoch:02d}-{val_acc:.4f}', monitor='val_acc', mode='max')
+    early_stop_cb = EarlyStopping(patience=5, monitor='val_acc', mode='max')
+
+    trainer = Trainer(
+        gpus=args.gpus,
+        logger=mlf_logger,
+        max_epochs=args.max_epochs,
+        max_steps=args.max_steps,
+        deterministic=True,
+        num_sanity_val_steps=args.num_sanity_val_steps,
+        val_check_interval=args.val_check_interval,
+        callbacks=[checkpoint_cb, early_stop_cb]
+    )
+
+    trainer.fit(model)
+    mlflow.pytorch.save_model(model, args.output_dir)
+
+def get_args():
+    parser = ArgumentParser()
+    parser.add_argument("--data_dir", type=str)
+    parser.add_argument("--gpus", default=0, type=int)
+    parser.add_argument("--max_epochs", default=25, type=int)
+    parser.add_argument("--max_steps", default=-1, type=int)
+    parser.add_argument("--batch_size", default=16, type=int)
+    parser.add_argument("--num_sanity_val_steps", default=1, type=int)
+    parser.add_argument("--val_check_interval", default=1.0, type=float)
+    parser.add_argument("--output_dir", default="model", type=str)
+    return parser.parse_args()
+
+if __name__ == '__main__':
+    main(get_args())

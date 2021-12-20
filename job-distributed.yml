@@ -1,0 +1,16 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+experiment_name: car-classification
+command: python train.py --data_dir ${{inputs.data_dir}} --max_epochs 5 --batch_size 16 --gpus 4
+code:
+  local_path: ./src
+environment: azureml:aml:6
+inputs:
+  data_dir:
+    folder: azureml://datastores/workspaceblobstore/paths/cars/car_data
+    mode: rw_mount
+compute: azureml:nc24-cluster
+resources:
+  instance_count: 1
+distribution:
+  type: mpi
+  process_count_per_instance: 4
