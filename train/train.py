@@ -1,4 +1,5 @@
 import os
+import json
 import numpy as np
 import torch
 import mlflow
@@ -71,10 +72,11 @@ def freeze(module: Module,
     for child in children[n_max:]:
         _make_trainable(module=child)
 
-class ResNet50(LightningModule):
+class ResNet152(LightningModule):
 
     def __init__(self, 
                 data_dir: str,
+                output_dir: str,
                 train_bn: bool = True,
                 batch_size: int = 16,
                 lr: float = 1e-3,
@@ -99,11 +101,12 @@ class ResNet50(LightningModule):
         self.anneal_strategy = anneal_strategy
         self.save_hyperparameters()
         self.data_dir = data_dir
+        self.output_dir = output_dir
         self.__build_model()
         
     def __build_model(self):
         num_target_classes = 196
-        backbone = models.resnet50(pretrained=True)
+        backbone = models.resnet152(pretrained=True)
     
         _layers = list(backbone.children())[:-1]
         self.feature_extractor = nn.Sequential(*_layers)
@@ -131,8 +134,9 @@ class ResNet50(LightningModule):
         y_logits = self.forward(x)
         train_loss = F.cross_entropy(y_logits, y)
         acc = accuracy(y_logits, y)
-        self.log('train_loss', train_loss, prog_bar=True)
-        self.log('train_acc', acc, prog_bar=True)
+        self.log('loss', train_loss, prog_bar=True)
+        self.log('acc', acc, prog_bar=True)
+        return train_loss
 
     def validation_step(self, batch, batch_idx):
         x, y = batch
@@ -173,10 +177,9 @@ class ResNet50(LightningModule):
             transforms.Normalize(mean, std, inplace=True)
         ])
         val = ImageFolder(self.data_dir + '/test', val_transforms)
-        valid, _ = random_split(val, [len(val), 0])
 
         self.train_dataset = train
-        self.val_dataset = valid
+        self.val_dataset = val
 
     def train_dataloader(self):
         return DataLoader(dataset=self.train_dataset,
@@ -192,18 +195,23 @@ class ResNet50(LightningModule):
                             shuffle=False,
                             pin_memory=True)
 
+    def get_class_idx(self):
+        return self.train_dataset.class_to_idx
+
 def main(args):
 
     seed_everything(42)
-    model = ResNet50(data_dir=args.data_dir, batch_size=args.batch_size)
+    model = ResNet152(data_dir=args.data_dir, output_dir=args.output_dir, batch_size=args.batch_size)
 
-    mlf_logger = MLFlowLogger()
+    mlflow.pytorch.autolog()
+    mlf_logger = MLFlowLogger(tracking_uri=mlflow.get_tracking_uri())
     
     checkpoint_cb = ModelCheckpoint(dirpath='./cars', filename ='cars-{epoch:02d}-{val_acc:.4f}', monitor='val_acc', mode='max')
     early_stop_cb = EarlyStopping(patience=5, monitor='val_acc', mode='max')
 
     trainer = Trainer(
         gpus=args.gpus,
+        strategy='ddp',
         logger=mlf_logger,
         max_epochs=args.max_epochs,
         max_steps=args.max_steps,
@@ -215,6 +223,8 @@ def main(args):
 
     trainer.fit(model)
     mlflow.pytorch.save_model(model, args.output_dir)
+    with open(os.path.join(args.output_dir, 'classes.json'), 'w') as f:
+        json.dump(model.get_class_idx(), f)
 
 def get_args():
     parser = ArgumentParser()
