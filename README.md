@@ -1,6 +1,8 @@
-# Car Brand Classifier
+# Car Brand Classifier Using Azure ML 
 
 The following repository contains the source code for training and deploying a machine learning web app for classifying car brands using Azure ML service.
+
+![alt text](image.png "Final result")
 
 ## Prerequisites
 
