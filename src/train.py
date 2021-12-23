@@ -13,17 +13,15 @@ def main(args):
 
     seed_everything(42)
     mlflow.pytorch.autolog()
-
+    
     model = ResNet152()
     data = CarData(args.batch_size, args.data_dir)
 
-    mlf_logger = MLFlowLogger(tracking_uri=mlflow.get_tracking_uri())
     checkpoint_cb = ModelCheckpoint(dirpath='./cars', filename ='cars-{epoch:02d}-{val_acc:.4f}', monitor='val_acc', mode='max')
     early_stop_cb = EarlyStopping(patience=5, monitor='val_acc', mode='max')
     trainer = Trainer(
         gpus=args.gpus,
-        strategy='dp',
-        logger=mlf_logger,
+        strategy='ddp',
         max_epochs=args.max_epochs,
         max_steps=args.max_steps,
         deterministic=True,
@@ -33,7 +31,8 @@ def main(args):
     )
     trainer.fit(model, data)
 
-    os.mkdir(args.output_dir)
+    if not os.path.exists(args.output_dir):
+        os.makedirs(args.output_dir)
     torch.save(model.state_dict(), args.output_dir + '/model.pth')
     with open(args.output_dir + '/classes.json', 'w') as f:
         json.dump(data.get_class_idx(), f)
@@ -47,7 +46,7 @@ def get_args():
     parser.add_argument('--batch_size', default=16, type=int)
     parser.add_argument('--num_sanity_val_steps', default=1, type=int)
     parser.add_argument('--val_check_interval', default=1.0, type=float)
-    parser.add_argument('--output_dir', default='model', type=str)
+    parser.add_argument('--output_dir', default='outputs', type=str)
     return parser.parse_args()
 
 if __name__ == '__main__':

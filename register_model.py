@@ -8,7 +8,7 @@ run_id = args.run_id
 
 ws = Workspace.from_config()
 run = ws.get_run(run_id)
-model = run.register_model(model_name='car-classifier', model_path='model')
+model = run.register_model(model_name='car-classifier', model_path='outputs')
 
 print('Model registered!')
 print(model.serialize())

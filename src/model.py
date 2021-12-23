@@ -1,3 +1,5 @@
+import mlflow
+import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from torch.nn import functional as F
@@ -126,7 +128,7 @@ class ResNet152(pl.LightningModule):
         acc = accuracy(y_logits, y)
         self.log('val_loss', val_loss, prog_bar=True)
         self.log('val_acc', acc, prog_bar=True)
-
+    
     def configure_optimizers(self):
         if self.current_epoch < self.epoch_freeze:
             optimizer = Adam(filter(lambda p: p.requires_grad, self.parameters()), lr=self.lr)

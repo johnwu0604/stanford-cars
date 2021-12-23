@@ -49,5 +49,3 @@ rm -rf car_data_1
 cd ../..
 sudo umount blobfuse
 ```
-
-7. Register `stanford-cars' folder as a dataset from Studio UI
