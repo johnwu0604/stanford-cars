@@ -6,12 +6,12 @@ from model import ResNet152
 from PIL import Image
 from torchvision import transforms
 
-model = ResNet152()
-model_dir = os.environ['AZUREML_MODEL_DIR'] + '/outputs'
-headers = requests.utils.default_headers()
-headers['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.87 Safari/537.36'
-
 def init():
+    global model, model_dir, headers
+    model_dir = os.environ['AZUREML_MODEL_DIR'] + '/outputs'
+    headers = requests.utils.default_headers()
+    headers['User-Agent'] = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/56.0.2924.87 Safari/537.36'
+    model = ResNet152()
     model.load_state_dict(torch.load(model_dir + '/model.pth'))
     model.eval()
 
