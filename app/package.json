@@ -1,0 +1,14 @@
+{
+    "name": "car-classifier-app",
+    "version": "0.0.0",
+    "private": true,
+    "scripts": {
+      "start": "cd client && npm run build && cd ../server && npm install && npm start"
+    },
+    "dependencies": {},
+    "engines": {
+      "node": ">=12.16.1",
+      "npm": ">=6.13.4"
+    },
+    "devDependencies": {}
+  }
