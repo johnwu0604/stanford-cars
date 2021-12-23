@@ -1,0 +1,5 @@
+$schema: https://azuremlschemas.azureedge.net/latest/environment.schema.json
+name: aml-inference
+image: mcr.microsoft.com/azureml/minimal-ubuntu18.04-py37-cpu-inference:latest
+conda_file: env/inference.yml
+description: CPU inference environment with common ML libraries.

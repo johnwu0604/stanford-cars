@@ -1,3 +1,4 @@
 $schema: https://azuremlschemas.azureedge.net/latest/managedOnlineEndpoint.schema.json
 name: car-classifier
-auth_mode: aml_token
+auth_mode: key
+description: Classify car brands based on an input image.

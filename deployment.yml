@@ -6,6 +6,6 @@ code_configuration:
   code: 
     local_path: ./src
   scoring_script: score.py
-environment: azureml:aml-inference:15
+environment: azureml:aml-inference:1
 instance_type: Standard_F2s_v2
 instance_count: 1

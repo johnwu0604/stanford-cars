@@ -3,7 +3,7 @@ experiment_name: car-classification
 command: python train.py --data_dir ${{inputs.data_dir}} --max_epochs 30 --batch_size 32 --gpus 1 
 code:
   local_path: ./src
-environment: azureml:aml:6
+environment: azureml:aml-train:1
 inputs:
   data_dir:
     folder: azureml://datastores/workspaceblobstore/paths/cars/car_data
