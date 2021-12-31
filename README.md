@@ -56,7 +56,7 @@ az ml online-endpoint create -f endpoint.yml
 az ml online-deployment create -f deployment.yml
 ```
 
-## Run webapp
+## To run the webapp
 
 1. Make a copy of the `app/server/.env.example` file and name it `.env`. Update the API key and server url to match your deployment config.
 
