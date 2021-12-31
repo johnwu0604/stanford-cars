@@ -2,6 +2,8 @@
 
 The following repository contains the source code for training and deploying a machine learning web app for classifying car brands using Azure ML service.
 
+The final web application is hosted in an Azure Container Instance here: http://car-classifier-app.westus2.azurecontainer.io:5000/.
+
 ![alt text](image.png "Final result")
 
 ## Prerequisites
@@ -58,8 +60,16 @@ az ml online-deployment create -f deployment.yml
 
 1. Make a copy of the `app/server/.env.example` file and name it `.env`. Update the API key and server url to match your deployment config.
 
-2. Run the app
+2. Run the app and navigate to localhost:5000
 
 ```
 cd app && npm start
+```
+
+Alternatively, you can build and run the app in a docker container.
+
+```
+cd app
+docker build . -t <USERNAME>/car-classifier-app
+docker run -e API_KEY=<API KEY> -e SERVER_URL=<SERVER URL> -p 5000:5000 -d <USERNAME>/car-classifier-app 
 ```
